@@ -1,0 +1,9 @@
+
+# Directories
+dump/*
+docs/*
+src/__pycache__/*
+# Files
+.env
+text.txt
+test.py
