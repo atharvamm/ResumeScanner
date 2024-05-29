@@ -7,128 +7,120 @@ from src.misc import misc_prompt
 from src.skills_match import *
 import os
 import time
+from util import save_pickle,load_pickle
 
 
 load_env_file(".env")
 
-projects_path = os.path.join(get_root_path(),"docs","projects")
+root_path = get_root_path()
+projects_path = os.path.join(root_path,"docs","projects")
 count = 0
 for project in os.listdir(projects_path):
     if "DS_Store" in project:
         continue
+
     project_path = os.path.join(projects_path,project)
     jd_path = os.path.join(projects_path,project,"JD")
     resumes_path = os.path.join(projects_path,project,"resumes")
-    # print(project_path,jd_path,resumes_path)
-    jd_data = parse_dir(jd_path)
-    resume_data = parse_dir(resumes_path)
 
+    # # # # Read Files
+    # jd_data = parse_dir(jd_path)
+    # resume_data = parse_dir(resumes_path)   
 
-    # print(jd_data)
-    # print(resume_data)
-    # recommendations = {}
-    for data in jd_data:
-        # print(data)
-        # print(data.page_content[:40],data.metadata["source"])
-        print(data.metadata["source"]) 
-        jd_skills = pick_set(data.page_content.lower())
-        jd_skills_keypoints = "".join(jd_prompt(jd_skills))
+    # # # Save Pickles
+    # save_pickle(jd_data,os.path.join(root_path, "dump","pickles",f"jd_data_{project}.pkl"))
+    # save_pickle(resume_data,os.path.join(root_path, "dump","pickles",f"resume_data_{project}.pkl"))
+
+    # Load Pickles
+    jd_data = load_pickle(os.path.join(root_path, "dump","pickles",f"jd_data_{project}.pkl"))
+    resume_data = load_pickle(os.path.join(root_path, "dump","pickles",f"resume_data_{project}.pkl"))
+
+    # print([data.metadata["source"] for data in jd_data])
+    # print([data.metadata["source"] for data in resume_data])
+    # print("\n"*2)
+
+    recommendations = {}
+    for jd_doc in jd_data:
+
+        jd_key = jd_doc.metadata["source"]
+        recommendations[jd_key] = {}
+        jd_skills = pick_set(jd_doc.page_content.lower())
+        jd_skills_keypoints = jd_prompt(jd_skills)
+        recommendations[jd_key]["jd_skills_keypoints"] = jd_skills_keypoints
+        print(jd_key)
+        print(jd_skills_keypoints)
+        # break
         time.sleep(20)
 
-        # print(data.page_content.lower(),process_jd(data.page_content))
-        # print(data.page_content)
-        # ans = spacy(data.page_content)
-        
-        # ans = process_jd(data.page_content)
-        # ans = " ".join(process_jd(data.page_content))
-        # for ele in ans:
-        #     pass
-            # print(ele,str(ele),check_non_numeric(str(ele)))
-            # if check_non_numeric(str(ele)):
-            #     print(ele)
-        # print(spacy(ans),len(spacy(ans)))
-        # print(yake(ans),len(yake(ans)))
-        # print(rake_nltk(ans),len(rake_nltk(ans)))
+        recommendations[jd_key]["docs"] = {}
+        for resume_doc in resume_data:
 
-        # print(get_spacy_keybert(data.page_content))
-
-    for data in resume_data:
-        # count += 1
-        # if count != 5:
-        #     continue
-        # print(count,data.metadata["source"],end = " ")
-        # data = process_resume(data.page_content)
-        # print(len(data))
-        # print(data)
-        print(data.metadata["source"],"\n")
-        data = " ".join(process_text(data.page_content))
-        # print(data)
+            text_key = resume_doc.metadata["source"]
+            resume_doc = " ".join(process_text(resume_doc.page_content))
 
 
-        ## Run for Algorithm Skills
-        # resume_skills = pick_set(data)
-        # ans = rag_novectorstore_skills(query=jd_skills,text = resume_skills)
-        # print(ans)
-        ## Run for Algorithm Skills
+            ## Run for Algorithm Skills
+            # resume_skills = pick_set(data)
+            # ans = rag_novectorstore_skills(query=jd_skills,text = resume_skills)
+            # print(ans)
+            ## Run for Algorithm Skills
 
 
-        # ## Run for LLM Skills
-        # resume_skills = pick_set(data)
-        # print(data,len(data))
-        prev = " "
-        for i in range(0,len(data),2000):
-            cur = data[max(i - 100,0):min(i+2000,len(data))]
-            prev = "".join(skills_prompt(jd_skills_keypoints, prev,cur))
-            time.sleep(45)
-        print(jd_skills_keypoints)
-        print("Final:",prev)
-        # ## Run for LLM Skills
+            # # ## Run for LLM Skills
+            # # resume_skills = pick_set(data)
+            # # print(data,len(data))
+            # recommendations[jd_key]["docs"][text_key] = []
+            # for i in range(0,len(resume_doc),3000):
+            #     cur = resume_doc[max(i - 100,0):min(i+3000,len(resume_doc))]
+            #     ans = "".join(skills_prompt(jd_skills_keypoints,cur))
+            #     recommendations[jd_key]["docs"][text_key].append(ans)
+            #     time.sleep(30)
+            # print(jd_key,text_key)
+            # print(jd_skills_keypoints)
+            # print("Final:",recommendations[jd_key]["docs"][text_key])
+            # # ## Run for LLM Skills
 
 
-        # ## Run for Algorithm Experience
-        # ans = clean_exp(data)
-        # print(experience_algo(ans))
-        # ## Run for Algorithm Experience
+            # ## Run for Algorithm Experience
+            # ans = clean_exp(data)
+            # print(experience_algo(ans))
+            # ## Run for Algorithm Experience
 
 
-        # ## Run for LLM Experience
-        # ans = clean_exp_llm(data)
-        # print(ans)
-        # print(experience_llm(ans))
-        # ## Run for LLM Experience
+            # ## Run for LLM Experience
+            # ans = clean_exp_llm(data)
+            # print(ans)
+            # print(experience_llm(ans))
+            # ## Run for LLM Experience
 
 
-        # ## Run for Misc
-        # print(data,len(data))
-        # prev = " "
-        # for i in range(0,len(data),2500):
-        #     cur = data[max(i - 100,0):min(i+2500,len(data))]
-        #     prev = "".join(misc_prompt(prev,cur))
-        #     # print("Prev:",prev)
-        #     # print("Cur:",cur)
-        #     time.sleep(45)
-        # print("Final:",prev)
-        # ## Run for Misc
+            # ## Run for Misc
+            # print(data,len(data))
+            # prev = " "
+            # for i in range(0,len(data),2500):
+            #     cur = data[max(i - 100,0):min(i+2500,len(data))]
+            #     prev = "".join(misc_prompt(prev,cur))
+            #     # print("Prev:",prev)
+            #     # print("Cur:",cur)
+            #     time.sleep(45)
+            # print("Final:",prev)
+            # ## Run for Misc
 
 
-        # print(ans,len(ans))
-        # print(data.split("\n"))
-        # data = process_resume(data.page_content)
-        # import datefinder
-        # matches = datefinder.find_dates(data)
-        # for match in matches:
-        #     print(match)
-        # experience_all(data)
-        print("\n"*4)
-        time.sleep(120)
-        # break
-    #     # print(data.page_content[:40],data.metadata["source"])
-    #     print(data.metadata["source"])
-        # pass
+            # print(ans,len(ans))
+            # print(data.split("\n"))
+            # data = process_resume(data.page_content)
+            # import datefinder
+            # matches = datefinder.find_dates(data)
+            # for match in matches:
+            #     print(match)
+            # experience_all(data)
+            print("\n"*4)
+            time.sleep(60)
+    #         break
+    #     break
     # break
-
-# process_jd(job_description)
-
+save_pickle(recommendations,os.path.join(root_path, "dump","pickles","recommendations.pkl"))
 
 
 '''

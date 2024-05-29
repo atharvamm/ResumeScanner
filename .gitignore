@@ -2,8 +2,9 @@
 # Directories
 dump/*
 docs/*
-src/__pycache__/*
+**/__pycache__/**
 # Files
 .env
 text.txt
 test.py
+util.py
