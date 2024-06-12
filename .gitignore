@@ -5,6 +5,7 @@ docs/*
 **/__pycache__/**
 # Files
 .env
-text.txt
-test.py
+text*.txt
+test*.py
 util.py
+run.sh

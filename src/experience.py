@@ -185,7 +185,7 @@
 #     model="meta/llama2-70b",
 #     messages=[{"role":"user","content":"{}".format(text)}],
 #     temperature=0.2,
-#     top_p=1,
+#     top_p=0,
 #     max_tokens=1024,
 #     stream=True
 #     )
@@ -295,10 +295,14 @@ from langchain.schema.document import Document
 from src.parse_doc import text_splitter
 from src.vector_store import get_embedding
 from util import *
-from datetime import datetime
+from datetime import datetime,date
 from openai import OpenAI
 import os
-
+import re
+import time
+import google.generativeai as genai
+from thefuzz import fuzz
+from dateutil.relativedelta import relativedelta
 
 def get_experience_yaml(data):
     client = OpenAI(
@@ -346,7 +350,7 @@ def get_experience_yaml(data):
     model="meta/llama2-70b",
     messages=[{"role":"user","content":"{}".format(text)}],
     temperature=0.0,
-    top_p=0.01,
+    top_p=0.00,
     max_tokens=1024,
     stream=True
     )
@@ -400,7 +404,9 @@ def merge_overlapping_strings(strings):
 from dateutil.parser import parse
 from dateutil.parser._parser import ParserError
 def parse_date(string, fuzzy=True):
-    # print(string, end = ">> ")
+    if isinstance(string,date):
+        return string
+    # print(string,type(string), end = ">><<\n")
     string = string.replace("'"," 20")
     string = string.replace("’"," 20")
     # string = string.translate({"'":"20","’":"20"})
@@ -459,9 +465,7 @@ def merge_overlapping_strings(strings):
     return merged_string
 
 def merge_experience_list(experiences_sorted: List[List]) -> Tuple[List[List], List[List]]:
-    # Sort experiences by start date (index -2)
-    # experiences_sorted = sorted(experiences, key=lambda x: x[-2])
-    
+
     final_list = []
     # scrap_list = []
     
@@ -480,6 +484,11 @@ def merge_experience_list(experiences_sorted: List[List]) -> Tuple[List[List], L
                 merged_org_name = merge_overlapping_strings(sorted([last_experience[0], org_name],key = lambda x : len(x)))
                 last_experience[0] = merged_org_name
 
+                # Technical Experience,Domain Score = 1,2
+                last_experience[1] = max(last_experience[1],experience[1])
+                last_experience[2] = max(last_experience[2],experience[2])
+                last_experience[3] = max(last_experience[3],experience[3])
+
                 if end_date > last_end_date:
                     last_experience[-1] = end_date
                     pass
@@ -493,6 +502,7 @@ def merge_experience_list(experiences_sorted: List[List]) -> Tuple[List[List], L
                     
     return final_list
 
+
 def diff_in_years(start_date: datetime, end_date: datetime) -> int:
 
     year_diff = end_date.year - start_date.year
@@ -503,24 +513,59 @@ def diff_in_years(start_date: datetime, end_date: datetime) -> int:
     total_years = total_months / 12
     return total_years
 
+def check_organization(line):
+    pattern = r'-\s*\n*\t*\s*Organization\b'
+    match = re.search(pattern, line)
+    return bool(match)
 
-def scan_all_experience(cur_data):
+scores = {
+    "none" : 0.05,
+    "low" : 0.33,
+    "medium" : 0.67,
+    "high" : 1
+}
+
+def get_score(key):
+    global scores
+    pattern = r'\b(none|low|medium|high)\b'
+    # print("Input:",key,"Matches:",re.findall(pattern, key))
+    key = re.findall(pattern, key)[0]
+    key = key.strip()
+    return scores.get(key,0)
+
+def sigmoid(x):
+    return 1/(1 + np.exp(-x))
+
+def scan_all_experience(cur_data,yoe):
     college_words = ["college","university"]
-    lines = cur_data.strip().split("\n")
+    lines = [ele for ele in cur_data.strip().split("\n") if len(ele) > 0]
     i = 0
     info = []
 
     while i < len(lines):
-        if "- Organization" in lines[i]:
+        # if "- Organization" in lines[i]:
+        # if check_organization(lines[max(0,i-1)]+lines[i]) and len(lines[i].strip().split(":")[-1].strip()) > 0:
+        if check_organization(lines[max(0,i-1)]+lines[i]):
+            # print(lines[i:i+6])
             org = lines[i].strip().split(":")[-1].strip()
             start_date = lines[i+1].strip().split(":")[-1].strip()
             end_date = lines[i+2].strip().split(":")[-1].strip()
+
+            # print(lines[i+3:i+6])
+            # print("OG Technical:",lines[i+4],"Input Technical:",lines[i+4].strip().split(":")[1].strip().lower())
+            # print("OG Domain:",lines[i+5],"Input Domain:",lines[i+5].strip().split(":")[1].strip().lower())
+
+            technical_score = get_score(lines[i+4].strip().split(":")[1].strip().lower())
+            domain_score = get_score(lines[i+5].strip().split(":")[1].strip().lower())
+            softskill_score = get_score(lines[i+5].strip().split(":")[1].strip().lower())
+            # print(lines[i+4].strip().split(":")[-1].strip().lower())
             # print("org:",org,"start:",start_date,"end:",end_date)    
+            # print("technical score:",technical_score,"domain score:",domain_score)
             if len(start_date) > 1:
-                info.append([org,start_date,end_date])
+                info.append([org,technical_score,domain_score,softskill_score,start_date,end_date])
             elif end_date.lower() == "present":
                 start_date = str(datetime.today().date())
-                info.append([org,start_date,end_date])
+                info.append([org,technical_score,domain_score,softskill_score,start_date,end_date])
             else:
                 i += 1
                 continue
@@ -538,9 +583,9 @@ def scan_all_experience(cur_data):
         if info[i][-1].lower() == "present":
             ans = "present"
         else:
-            ans = parse_date(info[i][2])
+            ans = parse_date(info[i][-1])
 
-        info[i].append(parse_date(info[i][1]))
+        info[i].append(parse_date(info[i][-2]))
         info[i].append(ans)
 
 
@@ -556,22 +601,903 @@ def scan_all_experience(cur_data):
                 info[i][-1] = datetime.today().date()
             else:
                 info[i][-1] = info[i + 1][-2]
-        # print(info[i][0],"||", info[i][1],"=",info[i][-2].strftime("%d %B %Y"),"||",info[i][2],"=",info[i][-1].strftime("%d %B %Y"))
 
     info = merge_experience_list(info)
-    # print(info,scrapped)
+    # print(info)
 
-    # print("\nFinal:\n\n")
+    total_exp,technical_exp,domain_exp,softskills_exp = 0,0,0,0
+    technical_wt,domain_wt,softskills_wt = 0,0,0
 
-    # print(info[i][0],"||", info[i][1],"=",info[i][-2].strftime("%d %B %Y"),"||",info[i][2],"=",info[i][-1].strftime("%d %B %Y"))
-        # print("\n"*2)
-    total_exp = 0
-    for ele in info:
-        cur_exp = diff_in_years(start_date = ele[-2], end_date = ele[-1])
-        total_exp += cur_exp
-        # print(ele[0],"||", ele[1],"=",ele[-2].strftime("%d %B %Y"),"||",ele[2],"=",ele[-1].strftime("%d %B %Y"))
-        # print("\n"*2)
-        # print("Cur Exp:", round(cur_exp,2), "Total Experience: ", round(total_exp,3))
+    i = 0
+    while i < len(info):
+        cur_exp = diff_in_years(start_date = info[i][-2], end_date = info[i][-1])
+        if cur_exp > 0 :
+            total_exp += cur_exp
+            technical_exp += info[i][1] * cur_exp
+            domain_exp += info[i][2] * cur_exp
+            softskills_exp += info[i][3] * cur_exp
 
-    return info,round(total_exp,3)
+            # total_exp += cur_exp
+            # technical_exp += info[i][1] * cur_exp
+            # technical_wt += info[i][1]
+            # domain_exp += info[i][2] * cur_exp
+            # domain_wt += info[i][2]
+            # softskills_exp += info[i][3] * cur_exp
+            # softskills_wt += info[i][3]            
 
+            # total_exp += cur_exp
+            # technical_exp += info[i][1]
+            # domain_exp += info[i][2]
+            # softskills_exp += info[i][3]           
+            i += 1
+        else:
+            info.pop(i)
+    # technical_score = ((technical_exp/technical_wt)/total_exp)
+    # domain_score = ((domain_exp/domain_wt)/total_exp)
+    # softskill_score = ((softskills_exp/softskills_wt)/total_exp)
+
+    # technical_score = (technical_exp/len(info))
+    # domain_score = (domain_exp/len(info))
+    # softskill_score = (softskills_exp/len(info))
+
+    # technical_score = technical_exp
+    # domain_score = domain_exp
+    # softskill_score = softskills_exp
+    # total_score = 1/(1 + np.exp(-(total_exp - yoe)))
+
+    print("Total,Technical,Domain,Softskills:{:.3f},{:.3f},{:.3f},{:.3f}".format(total_exp,technical_exp,domain_exp,softskills_exp))
+    technical_score = sigmoid(technical_exp - yoe)
+    domain_score = sigmoid(domain_exp - yoe)
+    softskill_score = sigmoid(softskills_exp - yoe)
+    total_score = sigmoid(total_exp - yoe)
+
+    # print(total_exp,yoe,(total_exp - yoe),1/(1 + np.exp(-(total_exp - yoe))))
+    # total_score = 1/(1 + np.exp(-(total_exp - yoe)))
+    return info,round(total_score,3),round(technical_score,3),round(domain_score,3),round(softskill_score,3)
+
+
+def get_experience_report(jd,data):
+    import time
+    client = OpenAI(
+    base_url = "https://integrate.api.nvidia.com/v1",
+    api_key = "{}".format(os.getenv("LLAMA3"))
+    )
+
+    text = '''
+    # Prompt
+
+    Extract the work experiences from the resume and return the details in YAML format. Follow these guidelines:
+
+    - If the end date is not a specific date but a string (e.g., "present", "till date", "now"), include the string "present".
+
+    - Compare the experience at the organization (including all projects) with the job description. Provide a rating of [None], [Low], [Medium], or [High] based on the relevance.
+
+    - Identify the domain of the projects at the organization (e.g., Insurance, Banking, Tech, Aerospace, etc.). Compare it with the job description domain and provide a rating of [None], [Low], [Medium], or [High].
+
+    Return the following YAML structure for each work experience entry:
+
+
+    WorkExperience:
+
+    - Organization:
+
+    - StartDate:
+
+    - EndDate:
+
+    - Title:
+
+    - Match Score:
+
+    - Domain Score:
+
+    
+    # Job Description
+    {}
+
+    # Resume Section
+    {}
+    '''.format(jd,data)
+
+    output = []
+    completion = client.chat.completions.create(
+    model="meta/llama3-70b-instruct",
+    messages=[{"role":"user","content":"{}".format(text)}],
+    temperature=0.0,
+    top_p=0.00,
+    max_tokens=2048,
+    seed=42,
+    stream=True
+    )
+    output = []
+    for chunk in completion:
+        if chunk.choices[0].delta.content is not None:
+            output.append(chunk.choices[0].delta.content)
+
+    time.sleep(int(os.getenv("SHORT_TIME")))
+    return output
+
+
+def get_experience_gemini(jd,data,model_name = 'gemini-1.0-pro'):
+    genai.configure(api_key=os.environ["GEMINI"])
+    model = genai.GenerativeModel(model_name)
+    # info = genai.get_model("models/"+model_name)
+    # print((info.input_token_limit, info.output_token_limit))
+
+
+    # text = '''
+    # # Prompt
+
+    # Extract the work experiences from the resume and return the details in YAML format. Follow these guidelines:
+
+    # - If the end date is not a specific date but a string (e.g., "present", "till date", "now"), include the string "present".
+
+    # - Compare the experience at the organization (including all projects) with the job description. Provide a rating of [None], [Low], [Medium], or [High] based on the relevance.
+
+    # - Identify the domain of the projects at the organization (e.g., Insurance, Banking, Tech, Aerospace, etc.). Compare it with the job description domain and provide a rating of [None], [Low], [Medium], or [High].
+
+    # Return the following YAML structure for each work experience entry:
+
+
+    # WorkExperience:
+
+    # - Organization:
+
+    # - StartDate:
+
+    # - EndDate:
+
+    # - Title:
+
+    # - Match Score:
+
+    # - Domain Score:
+
+    
+    # # Job Description
+    # {}
+
+    # # Resume Section
+    # {}
+    # '''.format(jd,data)
+
+    # text = '''
+    # # Prompt
+
+    # Extract the work experiences from the resume and return the details in YAML format. Follow these guidelines:
+
+    # 1. **End Date Handling**:
+    #     - If the end date is a string (e.g., "present", "till date", "now"), represent it as "present".
+
+    # 2. **Relevance Rating**:
+    #     - Compare the work experience (including all projects) at each organization with the job description.
+    #     - Provide a relevance rating as one of the following: `[None]`, `[Low]`, `[Medium]`, or `[High]`.
+
+    # 3. **Domain Identification and Rating**:
+    #     - Identify the domain of the projects at each organization (e.g., Insurance, Banking, Financial, Fintech, Tech, Aerospace, etc.).
+    #     - Determine the domain of the job description and provide a domain relevance rating as one of the following: `[Low]`, `[Medium]`, or `[High]`.
+
+    # Return the following YAML structure for each work experience entry:
+
+    # ```yaml
+    # WorkExperience:
+    # - Organization:
+    # - StartDate:
+    # - EndDate:
+    # - Title:
+    # - MatchScore:
+    # - DomainScore:
+    # ```
+
+    # # Job Description
+    # {}
+    # # Resume Section
+    # {}  
+    # '''.format(jd,data)
+
+    # text = \
+    # '''    
+    # # Prompt
+
+    # Extract the work experiences from the resume and return the details in YAML format. Follow these guidelines:
+
+    # - If the end date is not a specific date but a string (e.g., "present", "till date", "now"), include the string "present".
+    # - Compare the experience at each organization (including all projects) with the job description. Provide a technical rating of [None], [Low], [Medium], or [High] based on the alignment of the experience with the job description.
+    # - Determine a list of suitable domains for the job description (e.g., Insurance, Banking, Financial, Fintech, Tech, Aerospace, etc.).
+    # - Identify the domains of the projects at each organization and provide a domain relevance rating as one of the following: [Low], [Medium], or [High].
+
+    # Return the following YAML structure for each work experience entry:
+
+    # ```yaml
+    # WorkExperience:
+    # - Organization:
+    # - StartDate:
+    # - EndDate:
+    # - Title:
+    # - TechnicalScore:
+    # - DomainScore:
+    # - TechnicalScoreExplanation:
+    # - DomainScoreExplanation:
+    # ```
+
+    # # Job Description
+    # {}
+
+    # # Resume Section
+    # {}
+    # '''.format(jd,data)
+
+    # text = \
+    # '''
+    # As a seasoned recruiter with over two decades of experience in the IT industry, you've successfully filled numerous positions across various levels for diverse client organizations. Now, I have a task for you:
+
+    # ## Task
+
+    # Extract work experiences from resumes and present the details in YAML format, following these guidelines:
+
+    # 1. **Handling End Dates:**
+    #     - If the end date is informal (e.g., "present", "till date", "now"), use "present" in the output.
+
+    # 2. **Technical Rating:**
+    #     - Evaluate the candidate's experience at each organization relative to the provided job description.
+    #     - Assign a technical score rating of [None], [Low], [Medium], or [High] based on the alignment of their technical knowledge with the job description.
+    #     - [High] indicates most of the required skills are present, [None] means none of the required skills are present.
+
+    # 3. **Domain Relevance:**
+    #     - Identify suitable domains for the job description (e.g., Insurance, Banking, Financial, Fintech, Tech, Aerospace, etc.).
+    #     - Assess the projects undertaken and the domain of the organization to identify alignment with the job description's domains.
+    #     - Provide a domain score of [Low], [Medium], or [High] based on specific evaluation criteria. Focus solely on the domain. Clarify factors considered in determining domain relevance.
+    #     - [High] indicates experience directly related or having a direct application to the job description's domains, while [Low] indicates no relevance to the job description's domains.
+
+    # Return the following YAML structure for each work experience entry:
+
+    # ```yaml
+    # WorkExperience:
+    # - Organization:
+    # - StartDate:
+    # - EndDate:
+    # - Title:
+    # - TechnicalScore:
+    # - DomainScore:
+    # - DomainScoreExplanation:
+    # ```
+
+    # # Job Description
+    # {}
+
+    # # Resume
+    # {}
+    # '''.format(jd, data)
+
+
+    text = \
+    '''
+    As an experienced recruiter with over two decades in the IT industry, you've successfully placed numerous candidates across various levels in diverse client organizations. Now, here's your task:
+
+    # Task
+
+    Extract work experiences from resumes and present the details in YAML format, adhering to these guidelines:
+
+    1. **Handling End Dates:**
+        - If the end date is informal (e.g., "present", "till date", "now"), use "present" in the output.
+
+    2. **Technical Rating:**
+        - Assess the candidate's experience at each organization relative to the provided job description.
+        - Assign a technical score rating of [None], [Low], [Medium], or [High] based on the alignment of their technical skills with the job description.
+
+    3. **Domain Relevance:**
+        - Identify application domains for the individual projects.(e.g., Insurance, Banking, Fintech, etc.). 
+        - Provide a domain score of [Low], [Medium], or [High] based on experience alignment with job description domains. Focus solely on project domains, ignore technical details.
+    4. Rate soft - skills based on job description [Low], [Medium], or [High]
+
+
+    Return the following YAML structure for each work experience entry:
+
+    ```yaml
+    WorkExperience:
+    - Organization:
+    - StartDate:
+    - EndDate:
+    - Title:
+    - TechnicalScore:
+    - DomainScore:
+    - DomainScoreExplanation:
+    - SoftSkillsScore:
+    ```
+
+    # Job Description
+
+    {}
+
+    # Resume Section
+
+    {}
+    '''.format(jd,data)
+
+    num_tokens = model.count_tokens(text)
+    gen_config = {
+        "temperature": 0.0,
+        "top_p": 0.00,
+        "top_k": 1
+    }
+
+    response = model.generate_content(text,generation_config=gen_config)
+
+    time.sleep(int(os.getenv("SHORT_TIME")))
+    return response,num_tokens
+
+def get_gemini_single_prompt(jd,data,model_name = 'gemini-1.0-pro'):
+    genai.configure(api_key=os.environ["GEMINI"])
+    model = genai.GenerativeModel(model_name)
+    # info = genai.get_model("models/"+model_name)
+    # print((info.input_token_limit, info.output_token_limit))
+
+    text = \
+    '''
+    Today is 8th June 2024
+    As an experienced recruiter with over two decades in the IT industry, having successfully placed numerous candidates across various levels in diverse client organizations, I have a task for you:
+
+    # Task
+
+    Extract work experiences from resumes and present the details in YAML format, adhering to these guidelines:
+
+    1. Calculate the total experience of the candidate. Provide an explanation by listing out a series of tuples in the format (Org Name, Start Date, End Date, Title).
+    2. Assess the alignment of technical skills and knowledge in the job description with those in the resume, assigning a rating of [None], [Low], [Medium], or [High]. Dont just lookup keywords but judge the complexity of projects for the required years of experience or seniority level.
+    3. Identify the application industry (e.g., Insurance, Banking, Aerospace, etc.) mentioned in the job description. Evaluate the alignment of the application industry of projects in the resume, providing a rating of [None], [Low], [Medium], or [High]. Even minor projects in the industry count, so be liberal. Explain the rating by listing out relevant projects.
+    4. Evaluate the alignment of expected soft skills in the job description with those evident in the resume, assigning a rating of [None], [Low], [Medium], or [High].
+
+    Return the following YAML structure for each work experience entry:
+
+    ```yaml
+    - Total Experience:
+    - Experience Explanation: 
+    - Technical Skills Match:
+    - Technical Skills Explanation: 
+    - Domain Experience:
+    - Domain Experience Explanation:
+    - Soft Skills Rating:
+    ```
+
+    # Job Description
+
+    {}
+
+    # Resume Section
+
+    {}
+    '''.format(jd,data)
+
+    num_tokens = model.count_tokens(text)
+    gen_config = {
+        "temperature": 0.0,
+        "top_p": 0.00,
+        "top_k": 1
+    }
+
+    response = model.generate_content(text,generation_config=gen_config)
+
+    time.sleep(int(os.getenv("SHORT_TIME")))
+    return response,num_tokens
+
+def get_dates_prompt(jd,data,model_name = 'gemini-1.0-pro'):
+    genai.configure(api_key=os.environ["GEMINI"])
+    model = genai.GenerativeModel(model_name)
+    # info = genai.get_model("models/"+model_name)
+    # print((info.input_token_limit, info.output_token_limit))
+
+    text = \
+    '''
+    As an experienced recruiter with over two decades in the IT industry, you've successfully placed numerous candidates across various levels in diverse client organizations. Your expertise is now needed to assist in structuring candidate work experiences in a standardized format.
+
+    # Task
+
+    Extract work experiences from resumes and present the details in YAML format, adhering to these guidelines:
+
+    1. **Handling End Dates**: If the end date is informal (e.g., "present", "till date", "now"), use "present" in the output.
+    2. **Rate Soft Skills**: Based on the job description provided, rate the soft skills as [Low], [Medium], or [High]. Consider attributes like communication, teamwork, problem-solving, and adaptability.
+
+    ### YAML Structure
+
+    For each work experience entry, return the following YAML structure:
+
+    ```yaml
+    WorkExperience:
+    - Organization: 
+    StartDate: 
+    EndDate: 
+    Title: 
+    SoftSkillsScore: 
+    ```
+
+    # Job Description
+
+    {}
+
+    # Resume Section
+
+    {}
+    '''.format(jd,data)
+
+    num_tokens = model.count_tokens(text)
+    gen_config = {
+        "temperature": 0.0,
+        "top_p": 0.00,
+        "top_k": 1
+    }
+
+    response = model.generate_content(text,generation_config=gen_config)
+
+    time.sleep(int(os.getenv("SHORT_TIME")))
+    return response,num_tokens
+
+
+def get_match_prompt(jd,data,model_name = 'gemini-1.0-pro'):
+    genai.configure(api_key=os.environ["GEMINI"])
+    model = genai.GenerativeModel(model_name)
+    # info = genai.get_model("models/"+model_name)
+    # print((info.input_token_limit, info.output_token_limit))
+
+    text = \
+    '''
+    As an experienced recruiter with over two decades in the IT industry, you've successfully placed numerous candidates across various levels in diverse client organizations. Now, here's your task:
+
+    # Task
+
+    Extract work experiences from resumes and present the details in YAML format, adhering to these guidelines:
+
+    ### Guidelines:
+
+    1. **Technical Rating:**
+    - Assess the candidate's experience at each organization relative to the provided job description. Evaluate if the complexity of the projects or leadership experience in a particular role aligns with the seniority and skillset expected for the job.
+    - Assign a technical score rating of [None], [Low], [Medium], or [High] based on this alignment.
+
+    2. **Domain Relevance:**
+    - Identify the application domains for each experience (e.g., Insurance, Banking, Fintech).
+    - Provide a domain score of [Low], [Medium], or [High] based on the relevance of the candidate's experience to any of the job description domains. Focus solely on project domains, ignoring technical skills for this score.
+
+    ### Output Format:
+
+    Return the following YAML structure for each work experience entry:
+
+    ```yaml
+    WorkExperience:
+    - Organization:
+    - Title:
+    - TechnicalScore:
+    - DomainScore:
+    - TechnicalScoreExplanation:
+    - DomainScoreExplanation:
+    ```
+
+    # Job Description
+
+    {}
+
+    # Resume Section
+
+    {}
+    '''.format(jd,data)
+
+    num_tokens = model.count_tokens(text)
+    gen_config = {
+        "temperature": 0.0,
+        "top_p": 0.00,
+        "top_k": 1
+    }
+
+    response = model.generate_content(text,generation_config=gen_config)
+
+    time.sleep(int(os.getenv("SHORT_TIME")))
+    return response,num_tokens
+
+
+    # ```yaml
+    # WorkExperience:
+    # - Organization: 
+    # StartDate: 
+    # EndDate: 
+    # Title: 
+    # SoftSkillsScore: 
+    # ```
+
+    # ```yaml
+    # WorkExperience:
+    # - Organization:
+    # - Title:
+    # - TechnicalScore:
+    # - DomainScore:
+    # - TechnicalScoreExplanation:
+    # - DomainScoreExplanation:
+    # ```    
+
+
+def parse_dates_matches(llm_raw,yoe = 0):
+    college_words = ["college","university"]
+
+    # print("YOE:",yoe,"Type YOE:",type(yoe))
+    info = []
+    for ele in llm_raw:
+        # print("New LLM RAW Element")
+        # print(ele[0],ele[1])
+        dates = ele[0]
+        matches = ele[1]
+        # print(dates,matches)
+
+        line_dates = [ele for ele in dates.strip().split("\n") if len(ele) > 0]
+        line_matches = [ele for ele in matches.strip().split("\n") if len(ele) > 0]
+        # print(line_dates,line_matches)
+        
+        i = 0
+        while i < len(line_dates):
+            if check_organization(line_dates[max(0,i-1)]+line_dates[i]):
+                # print(lines[i:i+6])
+                # org = line_dates[i].strip().split(":")[-1].strip()
+                # start_date = line_dates[i+1].strip().split(":")[-1].strip()
+                # end_date = line_dates[i+2].strip().split(":")[-1].strip()
+                # softskill_score = get_score(line_dates[i+4].strip().split(":")[1].strip().lower())
+
+                org = line_dates[i].strip().split("Organization:")[-1].split("\n")[0].strip()
+                start_date = line_dates[i+1].strip().split("StartDate:")[-1].strip()
+                end_date = line_dates[i+2].strip().split("EndDate:")[-1].strip()
+                softskill_score = get_score(line_dates[i+4].strip().split("SoftSkillsScore:")[1].strip().lower())
+
+                technical_score,domain_score = 0,0
+
+                if len(start_date) > 1:
+                    info.append([org,technical_score,domain_score,softskill_score,start_date,end_date])
+                elif end_date.lower() == "present":
+                    start_date = str(datetime.today().date())
+                    info.append([org,technical_score,domain_score,softskill_score,start_date,end_date])
+                else:
+                    i += 1
+                    continue
+                for word in college_words:
+                    if word in org.lower():
+                        info.pop()
+                        break
+                
+                i += 2
+            i += 1
+        
+        # print(info)
+        i = 0
+
+        while i < len(line_matches):
+            if check_organization(line_matches[max(0,i-1)]+line_matches[i]):
+                # print(line_matches[max(0,i-1)]+line_matches[i])
+                # org = line_matches[i].strip().split(":")[1].strip()
+                # technical_score = get_score(line_matches[i+2].strip().split(":")[1].strip().lower())
+                # domain_score = get_score(line_matches[i+3].strip().split(":")[1].strip().lower())
+
+
+                org = line_matches[i].strip().split("Organization:")[-1].strip()
+                technical_score = get_score(line_matches[i+2].strip().split("TechnicalScore:")[-1].strip().lower())
+                domain_score = get_score(line_matches[i+3].strip().split("DomainScore:")[-1].strip().lower())
+                # print(org,technical_score,domain_score)
+
+                max_match,match_ele = -1,None
+                for ele in info:
+                    temp_ele = ele[0].replace(" ","")
+                    temp_org = org.replace(" ","")
+                    if fuzz.partial_ratio(temp_ele,temp_org) > max_match:
+                        match_ele = ele
+                        max_match = fuzz.partial_ratio(temp_ele,temp_org)
+
+                    # if fuzz.partial_ratio(temp_ele,temp_org) > 50:
+                    #     print(ele[0],org,fuzz.partial_ratio(temp_ele,temp_org),temp_ele,temp_org)
+                    # if fuzz.partial_ratio(temp_ele,temp_org) > 99:
+                    #     # Index Technical,Domain Score: 1,2
+                    #     ele[1] = max(ele[1],technical_score)
+                    #     ele[2] = max(ele[2], domain_score)
+                    #     # break
+                if max_match > 50:
+                    # Index Technical,Domain Score: 1,2
+                    # print("Updating for:",match_ele)
+                    match_ele[1] = max(match_ele[1],technical_score)
+                    match_ele[2] = max(match_ele[2], domain_score)
+                    # print("Updated:",match_ele)
+                    # break
+                i += 2
+            i += 1
+        
+    # print(info)
+
+    # for i in range(len(info)):
+    #     # print("Current Row:",info[i])
+    #     if not isinstance(info[i][-1],date) and info[i][-1].lower() == "present":
+    #         ans = "present"
+    #     else:
+    #         ans = parse_date(info[i][-1])
+
+    #     info[i].append(parse_date(info[i][-2]))
+    #     info[i].append(ans)
+    
+    for i in range(len(info)):
+        # print(info[i-1:i+1])
+        # print("Current Row:",info[i])
+        if info[i][-1].lower() == "present":
+            ans = "present"
+        else:
+            ans = parse_date(info[i][-1])
+        
+        temp_start = parse_date(info[i][-2])
+        temp_ans = datetime.today().date() if ans == "present" else ans
+        # print("Org:",info[i])
+        # print("OG Estimate:",temp_start,temp_ans)
+
+        if temp_start > temp_ans:
+            # Making the above sign >= removes all unemployment gaps.
+            if i == 0:
+                if i + 1 < len(info):
+                    if parse_date(info[i+1][-2]) >= temp_ans:
+                        temp_start = temp_ans - relativedelta(years=2)
+                    else:
+                        temp_start = parse_date(info[i+1][-1])
+                else:
+                    temp_start = temp_ans - relativedelta(years=2)
+            
+            elif i == len(info) - 1:
+                if info[i-1][-2] >= temp_ans:
+                    temp_start = temp_ans - relativedelta(years=2)
+                else:
+                    temp_start = parse_date(info[i-1][-1])            
+            
+            else:
+                # print("Previous:",info[i - 1])
+                # print("Current:",info[i])
+                # print("Next:",info[i + 1])
+
+                if info[i-1][-2] >= temp_ans:
+                    temp_start = parse_date(info[i + 1][-1])
+                else:
+                    temp_start = parse_date(info[i - 1][-1])
+
+
+        #     elif i == len(info) - 1:
+        #         temp_start = info[i - 1][-2]
+
+
+        # elif (isinstance(ans,date) and temp_start > ans):
+        #     if i == 0:
+        #         if i + 1 < len(info):
+        #             pass
+        #         else:
+        #             temp_start = datetime.today().date() - relativedelta(years=2)
+        #         # Next elements start date is after currents end date
+        #         if check_if and i+1 < len(info) and parse_date(info[i + 1][-2]) >= ans:
+        #             temp_start = info[i - 1][-2]
+        #             check_if = False
+
+
+        #         # Next elements end date is less than currents end date
+        #         next_end = parse_date(info[i + 1][-1])
+        #         if next_end <= ans:
+        #             temp_start = next_end
+        #             check_if = False
+        #     if check_if and i == len(info) - 1:
+        #         # Before elements start date is after currents end date
+        #         if check_if and i-1 > -1 and info[i-1][-2] >= ans:
+        #             temp_start = parse_date(info[i + 1][-2])
+        #             check_if = False
+        #         # Before elements end date is less than currents end date
+        #         before_end = info[i-1][-1]
+        #         if before_end <= ans:
+        #             temp_start = before_end
+        #             check_if = False
+        #     # Next elements start date is after currents end date
+        #     elif parse_date(info[i + 1][-2]) >= ans:
+        #         temp_start = info[i - 1][-1]
+        #     # Before elements end date is less than currents end date
+        #     elif info[i-1][-1] <= ans:
+        #         temp_start = parse_date(info[i + 1][-2])
+                
+        # print("Final Answers:",temp_start,temp_ans)
+        info[i].append(temp_start)
+        info[i].append(ans)
+
+    info.sort(key = lambda x : x[-2])
+
+    for i in range(len(info)):
+        if info[i][-2] == datetime.today().date():
+                info[i][-2] = info[i - 1][-1]
+        # print(info[i])
+        if not isinstance(info[i][-1],date) and info[i][-1] == "present":
+            if i == len(info) - 1:
+                info[i][-1] = datetime.today().date()
+            else:
+                info[i][-1] = info[i + 1][-2]
+        # Add extra experience for the last role. So make cur_exp > 0 condn.
+        # cur_exp = diff_in_years(start_date = info[i][-2], end_date = info[i][-1])
+        # if cur_exp > 0 :
+        #     if info[i][-2] == datetime.today().date():
+        #         info[i][-2] = info[i - 1][-1]
+
+    # print("Before Merge")
+    # print("----")
+    # for ele in info:
+    #     print(ele)
+    # print("----")
+
+    info = merge_experience_list(info)
+
+    # print("Post Merge")
+    # print("----")
+    # for ele in info:
+    #     print(ele)
+    # print("----")
+
+    total_exp,technical_exp,domain_exp,softskills_exp = 0,0,0,0
+    technical_wt,domain_wt,softskills_wt = 0,0,0
+    # print(info)
+
+    i = 0
+    while i < len(info):
+        # print(info[i])
+        cur_exp = diff_in_years(start_date = info[i][-2], end_date = info[i][-1])
+        if cur_exp > 0 :
+            # total_exp += cur_exp
+            # technical_exp += info[i][1] * cur_exp
+            # domain_exp += info[i][2] * cur_exp
+            # softskills_exp += info[i][3] * cur_exp
+
+            total_exp += cur_exp
+            technical_exp += info[i][1] * cur_exp * 0.99**(len(info) - i - 1)
+            domain_exp += info[i][2] * cur_exp * 0.99**(len(info) - i - 1)
+            softskills_exp += info[i][3] * cur_exp * 0.99**(len(info) - i - 1)
+
+            # total_exp += cur_exp
+            # technical_exp += info[i][1] * cur_exp
+            # technical_wt += info[i][1]
+            # domain_exp += info[i][2] * cur_exp
+            # domain_wt += info[i][2]
+            # softskills_exp += info[i][3] * cur_exp
+            # softskills_wt += info[i][3]            
+
+            # total_exp += cur_exp
+            # technical_exp += info[i][1]
+            # domain_exp += info[i][2]
+            # softskills_exp += info[i][3]           
+            i += 1
+        else:
+            info.pop(i)
+    # technical_score = ((technical_exp/technical_wt)/total_exp)
+    # domain_score = ((domain_exp/domain_wt)/total_exp)
+    # softskill_score = ((softskills_exp/softskills_wt)/total_exp)
+
+    # technical_score = (technical_exp/len(info))
+    # domain_score = (domain_exp/len(info))
+    # softskill_score = (softskills_exp/len(info))
+
+    # technical_score = technical_exp
+    # domain_score = domain_exp
+    # softskill_score = softskills_exp
+    # total_score = 1/(1 + np.exp(-(total_exp - yoe)))
+
+    print("Total,Technical,Domain,Softskills:{:.3f},{:.3f},{:.3f},{:.3f}".format(total_exp,technical_exp,domain_exp,softskills_exp))
+    technical_score = sigmoid(technical_exp - yoe)
+    domain_score = sigmoid(domain_exp - yoe)
+    softskill_score = sigmoid(softskills_exp - yoe)
+    total_score = sigmoid(total_exp - yoe)
+
+    # print(total_exp,yoe,(total_exp - yoe),1/(1 + np.exp(-(total_exp - yoe))))
+    # total_score = 1/(1 + np.exp(-(total_exp - yoe)))
+    return info,round(total_score,3),round(technical_score,3),round(domain_score,3),round(softskill_score,3)
+
+def null_scan_all_experience(cur_data,yoe):
+    college_words = ["college","university"]
+    lines = [ele for ele in cur_data.strip().split("\n") if len(ele) > 0]
+    i = 0
+    info = []
+
+    while i < len(lines):
+        # if "- Organization" in lines[i]:
+        # if check_organization(lines[max(0,i-1)]+lines[i]) and len(lines[i].strip().split(":")[-1].strip()) > 0:
+        if check_organization(lines[max(0,i-1)]+lines[i]):
+            # print(lines[i:i+6])
+            org = lines[i].strip().split(":")[-1].strip()
+            start_date = lines[i+1].strip().split(":")[-1].strip()
+            end_date = lines[i+2].strip().split(":")[-1].strip()
+
+            # print(lines[i+3:i+6])
+            # print("OG Technical:",lines[i+4],"Input Technical:",lines[i+4].strip().split(":")[1].strip().lower())
+            # print("OG Domain:",lines[i+5],"Input Domain:",lines[i+5].strip().split(":")[1].strip().lower())
+
+            technical_score = get_score(lines[i+4].strip().split(":")[1].strip().lower())
+            domain_score = get_score(lines[i+5].strip().split(":")[1].strip().lower())
+            softskill_score = get_score(lines[i+5].strip().split(":")[1].strip().lower())
+            # print(lines[i+4].strip().split(":")[-1].strip().lower())
+            # print("org:",org,"start:",start_date,"end:",end_date)    
+            # print("technical score:",technical_score,"domain score:",domain_score)
+            if len(start_date) > 1:
+                info.append([org,technical_score,domain_score,softskill_score,start_date,end_date])
+            elif end_date.lower() == "present":
+                start_date = str(datetime.today().date())
+                info.append([org,technical_score,domain_score,softskill_score,start_date,end_date])
+            else:
+                i += 1
+                continue
+            for word in college_words:
+                if word in org.lower():
+                    info.pop()
+                    break
+            
+            i += 2
+        i += 1
+
+    # print(info)
+    for i in range(len(info)):
+        # print(ele)
+        if info[i][-1].lower() == "present":
+            ans = "present"
+        else:
+            ans = parse_date(info[i][-1])
+
+        info[i].append(parse_date(info[i][-2]))
+        info[i].append(ans)
+
+
+
+    info.sort(key = lambda x : x[-2])
+
+    for i in range(len(info)):
+        # print(info[i])
+        if info[i][-2] == datetime.today().date():
+            info[i][-2] = info[i - 1][-1]
+        if info[i][-1] == "present":
+            if i == len(info) - 1:
+                info[i][-1] = datetime.today().date()
+            else:
+                info[i][-1] = info[i + 1][-2]
+
+    info = merge_experience_list(info)
+    # print(info)
+
+    total_exp,technical_exp,domain_exp,softskills_exp = 0,0,0,0
+    technical_wt,domain_wt,softskills_wt = 0,0,0
+
+    i = 0
+    while i < len(info):
+        cur_exp = diff_in_years(start_date = info[i][-2], end_date = info[i][-1])
+        if cur_exp > 0 :
+            total_exp += cur_exp
+            technical_exp += info[i][1] * cur_exp
+            domain_exp += info[i][2] * cur_exp
+            softskills_exp += info[i][3] * cur_exp
+
+            # total_exp += cur_exp
+            # technical_exp += info[i][1] * cur_exp
+            # technical_wt += info[i][1]
+            # domain_exp += info[i][2] * cur_exp
+            # domain_wt += info[i][2]
+            # softskills_exp += info[i][3] * cur_exp
+            # softskills_wt += info[i][3]            
+
+            # total_exp += cur_exp
+            # technical_exp += info[i][1]
+            # domain_exp += info[i][2]
+            # softskills_exp += info[i][3]           
+            i += 1
+        else:
+            info.pop(i)
+    # technical_score = ((technical_exp/technical_wt)/total_exp)
+    # domain_score = ((domain_exp/domain_wt)/total_exp)
+    # softskill_score = ((softskills_exp/softskills_wt)/total_exp)
+
+    # technical_score = (technical_exp/len(info))
+    # domain_score = (domain_exp/len(info))
+    # softskill_score = (softskills_exp/len(info))
+
+    # technical_score = technical_exp
+    # domain_score = domain_exp
+    # softskill_score = softskills_exp
+    # total_score = 1/(1 + np.exp(-(total_exp - yoe)))
+
+    print("Total,Technical,Domain,Softskills:{:.3f},{:.3f},{:.3f},{:.3f}".format(total_exp,technical_exp,domain_exp,softskills_exp))
+    technical_score = sigmoid(technical_exp - yoe)
+    domain_score = sigmoid(domain_exp - yoe)
+    softskill_score = sigmoid(softskills_exp - yoe)
+    total_score = sigmoid(total_exp - yoe)
+
+    # print(total_exp,yoe,(total_exp - yoe),1/(1 + np.exp(-(total_exp - yoe))))
+    # total_score = 1/(1 + np.exp(-(total_exp - yoe)))
+    return info,round(total_score,3),round(technical_score,3),round(domain_score,3),round(softskill_score,3)

@@ -170,8 +170,8 @@ from src.load_env import load_env_file, get_root_path
 from src.parse_doc import parse_dir
 from util import save_pickle,load_pickle
 from src.process_text import process_text
-from src.experience import scan_all_experience,get_experience_yaml
-from src.skills_match import query_text_cosine_score
+from src.experience import scan_all_experience,get_experience_gemini,get_gemini_single_prompt
+from src.skills_match import query_text_cosine_score,get_jd_domain_reqs
 
 
 
@@ -187,12 +187,23 @@ from src.skills_match import query_text_cosine_score
 
 
 if __name__=="__main__":
-    load_env_file(".env")
+    import argparse
+    parser = argparse.ArgumentParser(description="Print for resume scanner.")
+    parser.add_argument("--filename", required=True, help="The name of the file to process")
+    args = parser.parse_args()
+    print(f"Running: {args.filename}")
 
+
+
+    load_env_file(".env")
     root_path = get_root_path()
     projects_path = os.path.join(root_path,"docs","projects")
     count = 0
     recommendations = {}
+    
+    styles =["single_cot","allinexp","breakexpandmatch"]
+    style = styles[2]
+    
     for project in os.listdir(projects_path):
         if "DS_Store" in project:
             continue
@@ -223,70 +234,169 @@ if __name__=="__main__":
 
         jd_data = jd_data[0]
         jd_key = jd_data.metadata["source"]
+
+        # Get job description summary
+        # requirement,domain = get_jd_domain_reqs(jd_data.page_content,func_type = "prompt")
+        domain,yoe =  get_jd_domain_reqs(jd_data.page_content,func_type = "prompt")
+        jd_summary = jd_data.page_content +"\n"*2+"Domains:"+ domain
+        # print(jd_summary,len(jd_summary))
+
         recommendations[jd_key] = {}
         recommendations[jd_key]["page_content"] = jd_data.page_content
-        recommendations[jd_key]["page_content"] = "jd_data.page_content"
-        query_docs = text_splitter([jd_data])
+        # recommendations[jd_key]["page_content"] = "jd_data.page_content"
+        recommendations[jd_key]["summary"] = jd_summary
+        # recommendations[jd_key]["summary"] = "jd_summary"
+        recommendations[jd_key]["yoe"] = yoe
+        # continue
 
+        query_docs = text_splitter([jd_data])
         recommendations[jd_key]["docs"] = {}
         for resume_doc in resume_data:
+
             text_key = resume_doc.metadata["source"]
             recommendations[jd_key]["docs"][text_key] = {}
 
             recommendations[jd_key]["docs"][text_key]["page_content"] = resume_doc.page_content
-            recommendations[jd_key]["docs"][text_key]["page_content"] = "resume_doc.page_content"
+            # recommendations[jd_key]["docs"][text_key]["page_content"] = "resume_doc.page_content"
 
             resume_text = " ".join(process_text(resume_doc.page_content))
-            recommendations[jd_key]["docs"][text_key]["processed_content"] = "processed_text"
+            # recommendations[jd_key]["docs"][text_key]["processed_content"] = "processed_text"
+            recommendations[jd_key]["docs"][text_key]["processed_content"] = resume_text
 
 
-            #### Total Experience
+            #### Total Experience, Technical Experience, Domain Experience
             output = []
+            llm_raw = []
             resume_content = resume_doc.page_content
-            for i in range(0,len(resume_content),3000):
-                cur = resume_content[max(i - 100,0):min(i+3000,len(resume_content))]
-                ans = "".join(get_experience_yaml(cur))
-                output.append(ans)
-                time.sleep(30)
-            
-            experience = scan_all_experience("".join(output))
-            recommendations[jd_key]["docs"][text_key]["experience_list"] = experience[0]
-            recommendations[jd_key]["docs"][text_key]["total_experience"] = experience[1]
+            for i in range(0,len(resume_content),15000):
+                cur = resume_content[max(i - 100,0):min(i+15000,len(resume_content))]
+                # ans = "".join(get_experience_yaml(cur))
 
-            #### Technical Experience
+                if style == styles[0]:
+                    temp = get_gemini_single_prompt(jd_summary,cur)
+                    llm_raw.append(temp)
+                    # ans = "".join(llm_raw[-1][0].text)
+                    # output.append(ans)
+
+                elif style == styles[1]:
+                    temp = get_experience_gemini(jd_summary,cur)
+                    llm_raw.append(temp)
+                    ans = "".join(llm_raw[-1][0].text)
+                    output.append(ans)
+
+                elif style == styles[2]:
+                    from src.experience import get_dates_prompt,get_match_prompt
+                    dates = get_dates_prompt(jd_summary,cur)
+                    matches = get_match_prompt(jd_summary,cur)
+                    llm_raw.append((dates,matches))
+                    ans = "".join(llm_raw[-1][0][0].text + llm_raw[-1][1][0].text)
+                    output.append(ans)
 
 
-            #### Domain Experience
-            
 
-            #### Text-JD Cosine Score
-            text_docs = text_splitter([resume_doc])
-            score = query_text_cosine_score(query_docs,text_docs)
-            recommendations[jd_key]["docs"][text_key]["cosine_score"] = score
+            if style == styles[0]:
+                pass
+                # recommendations[jd_key]["docs"][text_key]["llm_output"] = llm_raw
+                # recommendations[jd_key]["docs"][text_key]["llm_text"] = "".join(output)
+                # # experience = scan_all_experience(recommendations[jd_key]["docs"][text_key]["llm_text"])
+                # # recommendations[jd_key]["docs"][text_key]["experience_list"] = experience[0]
+                # # recommendations[jd_key]["docs"][text_key]["total_experience"] = experience[1]
+                # # recommendations[jd_key]["docs"][text_key]["tech_experience"] = experience[2]
+                # # recommendations[jd_key]["docs"][text_key]["domain_experience"] = experience[3]
 
 
-            #### Composite Score
-            recommendations[jd_key]["docs"][text_key]["final_score"] = 0.0
+                # #### Text-JD Cosine Score
+                # text_docs = text_splitter([resume_doc])
+                # score = query_text_cosine_score(query_docs,text_docs)
+                # recommendations[jd_key]["docs"][text_key]["cosine_score"] = score
 
-            # print(ans,len(ans))
-            # print(data.split("\n"))
-            # data = process_resume(data.page_content)
-            # import datefinder
-            # matches = datefinder.find_dates(data)
-            # for match in matches:
-            #     print(match)
-            # experience_all(data)
 
-            # print("\n"*4)
+                # #### Composite Score
+                # recommendations[jd_key]["docs"][text_key]["final_score"] = 0.0
+
+                # # print(ans,len(ans))
+                # # print(data.split("\n"))
+                # # data = process_resume(data.page_content)
+                # # import datefinder
+                # # matches = datefinder.find_dates(data)
+                # # for match in matches:
+                # #     print(match)
+                # # experience_all(data)
+                # # print("\n"*4)
+
+
+            elif style == styles[1]:
+                recommendations[jd_key]["docs"][text_key]["llm_output"] = llm_raw
+                recommendations[jd_key]["docs"][text_key]["llm_text"] = "".join(output)
+                # experience = scan_all_experience(recommendations[jd_key]["docs"][text_key]["llm_text"])
+                # recommendations[jd_key]["docs"][text_key]["experience_list"] = experience[0]
+                # recommendations[jd_key]["docs"][text_key]["total_experience"] = experience[1]
+                # recommendations[jd_key]["docs"][text_key]["tech_experience"] = experience[2]
+                # recommendations[jd_key]["docs"][text_key]["domain_experience"] = experience[3]
+
+
+                #### Text-JD Cosine Score
+                text_docs = text_splitter([resume_doc])
+                score = query_text_cosine_score(query_docs,text_docs)
+                recommendations[jd_key]["docs"][text_key]["cosine_score"] = score
+
+
+                #### Composite Score
+                recommendations[jd_key]["docs"][text_key]["final_score"] = 0.0
+
+                # print(ans,len(ans))
+                # print(data.split("\n"))
+                # data = process_resume(data.page_content)
+                # import datefinder
+                # matches = datefinder.find_dates(data)
+                # for match in matches:
+                #     print(match)
+                # experience_all(data)
+                # print("\n"*4)
+
+
+            elif style == styles[2]:
+                pass
+                recommendations[jd_key]["docs"][text_key]["llm_output"] = llm_raw
+                recommendations[jd_key]["docs"][text_key]["llm_text_only"] = [(ele[0][0].text,ele[1][0].text) for ele in llm_raw]
+                recommendations[jd_key]["docs"][text_key]["llm_text"] = "".join(output)
+
+                # experience = scan_all_experience(recommendations[jd_key]["docs"][text_key]["llm_text"])
+                # recommendations[jd_key]["docs"][text_key]["experience_list"] = experience[0]
+                # recommendations[jd_key]["docs"][text_key]["total_experience"] = experience[1]
+                # recommendations[jd_key]["docs"][text_key]["tech_experience"] = experience[2]
+                # recommendations[jd_key]["docs"][text_key]["domain_experience"] = experience[3]
+
+
+                #### Text-JD Cosine Score
+                text_docs = text_splitter([resume_doc])
+                score = query_text_cosine_score(query_docs,text_docs)
+                recommendations[jd_key]["docs"][text_key]["cosine_score"] = score
+
+
+                #### Composite Score
+                recommendations[jd_key]["docs"][text_key]["final_score"] = 0.0
+
+                # print(ans,len(ans))
+                # print(data.split("\n"))
+                # data = process_resume(data.page_content)
+                # import datefinder
+                # matches = datefinder.find_dates(data)
+                # for match in matches:
+                #     print(match)
+                # experience_all(data)
+                # print("\n"*4) 
+
+
 
             print("JD:",jd_key,"Doc:",text_key,"Done !!!")
-            time.sleep(60)
-            # break
+            time.sleep(int(os.getenv("LONG_TIME")))
+        #     break
         # break
 
 
     # print(recommendations)
-    save_pickle(recommendations,os.path.join(root_path, "dump","pickles","recommendations.pkl"))
+    save_pickle(recommendations,os.path.join(root_path, "dump","pickles",f"{args.filename}"))
 
 '''
 

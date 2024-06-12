@@ -70,7 +70,7 @@
 #     model="meta/llama2-70b",
 #     messages=[{"role":"user","content":"{}".format(text)}],
 #     temperature=0.0,
-#     top_p=1,
+#     top_p=0,
 #     max_tokens=1024,
 #     stream=True
 #     )
@@ -213,7 +213,7 @@
 #     model="meta/llama2-70b",
 #     messages=[{"role":"user","content":"{}".format(text)}],
 #     temperature=0.0,
-#     top_p=1,
+#     top_p=0,
 #     max_tokens=1024,
 #     stream=True
 #     )
@@ -415,7 +415,11 @@ from src.vector_store import get_embedding
 from src.parse_doc import text_splitter
 import numpy as np
 from src.process_text import get_doc_frm_st
-
+from openai import OpenAI
+import os
+import re
+import time
+import google.generativeai as genai
 
 
 def find_overlap(a, b):
@@ -517,3 +521,173 @@ def rag_novectorstore_skills(query, text, threshold = 0.0):
     for index in sorted(added_docs):
         ans.append(text_docs[index].page_content)
     return merge_overlapping_strings(ans)
+
+
+
+
+def get_jd_domain_reqs_prompt(data):
+    client = OpenAI(
+    base_url = "https://integrate.api.nvidia.com/v1",
+    api_key = "{}".format(os.getenv("LLAMA3"))
+    )
+
+    text = '''
+    Assume you are a senior IT recruiter with 20+ years of experience. Your task is to extract the technical requirements from the provided job description. The requirements noted should be as detailed and specific as, or better than, those in the job description. Additionally, identify the domain of the organization based on the job description (e.g., Insurance, Banking, Tech, Aerospace, etc.). If you dont know domain fill "Any".
+
+    Please format your response in YAML as follows:
+
+    ```yaml
+    Requirements:
+    - requirement1
+    - ...
+    Domain: domain_name
+    ```
+
+    Job Description
+    {}
+
+    '''.format(data)
+
+    completion = client.chat.completions.create(
+    model="meta/llama3-70b-instruct",
+    messages=[{"role":"user","content":"{}".format(text)}],
+    temperature=0.0,
+    top_p=0.00,
+    max_tokens=1024,
+    seed=42,
+    stream=True
+    )
+    output = []
+    for chunk in completion:
+        if chunk.choices[0].delta.content is not None:
+            output.append(chunk.choices[0].delta.content)
+
+    # print(output)
+    output = "".join(output)
+    
+    req_start = output.index("Requirements:")
+    domain_start = output.index("Domain:")
+    final_end = output.index("\n",domain_start) if "\n" in output[domain_start:] else len(output)
+    # print(output[req_start:domain_start],output[domain_start:final_end])
+    # return output
+
+    time.sleep(int(os.getenv("SHORT_TIME")))
+    return output[req_start:domain_start],output[domain_start:final_end]
+
+
+def get_jd_yoe(data):
+    pattern = r'\d+'
+    numbers = re.findall(pattern, data)
+    yoe = int(max(numbers))
+    return yoe
+
+def get_jd_domain_reqs_stop_words(data):
+
+    from nltk.corpus import stopwords
+
+    pattern = r'\d+'
+    numbers = re.findall(pattern, data)
+    yoe = numbers,int(max(numbers))
+
+    stop_words = set(stopwords.words('english'))
+    # seen_words = set()
+    ans = []
+    # data = data.lower()
+    # print(data)
+    for line in data.split("\n"):
+        for word in re.split(';|,|\s|/', line):
+            if word.lower() not in stop_words:
+                ans.append(word)
+    print("Final Ans:",ans)
+    print("YOE:",yoe)
+    print("Returning Length:",len(ans))
+    return " ".join(ans),""
+
+
+    # import nltk
+
+    # from nltk.tokenize import word_tokenize
+    # from langchain.schema.document import Document
+
+
+    # def clean_text(text):
+    #     text = re.sub(r'[^\w\s+-.,\'\/]', '', text)
+    #     # text = re.sub(r'\n+', '\n', text)
+    #     # text = re.sub(r'\s+', ' ', text)
+    #     return text
+
+
+    # def process_text(text):
+    #     text = text.lower()
+    #     text = clean_text(text)
+    #     tokens = text.split(" ")
+    #     return tokens
+    #     # return cleaned_tokens
+    
+    return "",""
+
+# import re
+
+def check_word(word,line):
+    pattern = r'-\s*\n*\t*\s*{}\b'.format(word)
+    match = re.search(pattern, line)
+    return bool(match)
+
+
+def get_jd_domain_yoe(data,model_name = 'gemini-1.0-pro'):
+    # https://stackoverflow.com/questions/4289331/how-to-extract-numbers-from-a-string-in-python
+    genai.configure(api_key=os.environ["GEMINI"])
+    model = genai.GenerativeModel(model_name)
+
+    text = \
+    '''
+    Assume you are a senior IT recruiter with over 20 years of experience. Your task is to identify the domain or related sector based on the given job description (e.g., Insurance, Banking, Aerospace, etc.). Also, you are supposed to find out the required years of experience and return the findings in YAML format.
+
+    ```yaml
+    - Domains: Domain1, Domain2, Domain3
+    - Years of Experience:
+
+    # Job Description
+
+    {}
+    '''.format(data)
+
+    num_tokens = model.count_tokens(text)
+    gen_config = {
+        "temperature": 0.0,
+        "top_p": 0.00,
+        "top_k": 1
+    }
+
+    response = model.generate_content(text,generation_config=gen_config).text
+
+    lines = response.lower().split("\n")
+
+    start,end = -1,-1
+    for i in range(len(lines)):
+        if check_word("domains",lines[i]):
+            start = i
+            continue
+        elif start != -1 and check_word("years",lines[i]):
+            end = i
+
+    domains = "\n".join(lines[start:end]).strip().split(":")[1]
+    yoe = lines[end].split(":")[1]    
+    time.sleep(int(os.getenv("SHORT_TIME")))
+
+    # return response,num_tokens
+    # print("Domains Line:",domains)
+    # print("YOE Line:",yoe)
+    # print("YOE:",max([int(ele) for ele in re.findall(r'\d+', yoe)]))
+    return domains,max([int(ele) for ele in re.findall(r'\d+', yoe)])
+
+
+def get_jd_domain_reqs(data, func_type = ""):
+    if func_type == "prompt":
+        # return get_jd_domain_reqs_prompt(data)
+        return get_jd_domain_yoe(data)
+    elif func_type == "stop_words":
+        return get_jd_domain_reqs_stop_words(data)
+    else:
+        return data,""
+    
