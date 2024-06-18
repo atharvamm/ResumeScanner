@@ -168,11 +168,11 @@ from src.parse_doc import text_splitter
 from src.vector_store import get_embedding
 from src.load_env import load_env_file, get_root_path
 from src.parse_doc import parse_dir
-from util import save_pickle,load_pickle
+import src.util as util
 from src.process_text import process_text
-from src.experience import scan_all_experience,get_experience_gemini,get_gemini_single_prompt
-from src.skills_match import query_text_cosine_score,get_jd_domain_reqs
-
+from src.experience import scan_all_experience,get_experience_gemini,get_gemini_single_prompt, get_baseline_score,parse_dates_matches
+import src.skills_match as skills_match
+import src.prompting as prompting
 
 
 # from src.vector_store import get_vectorstore,get_connection,get_embedding
@@ -222,8 +222,8 @@ if __name__=="__main__":
         # save_pickle(resume_data,os.path.join(root_path, "dump","pickles",f"resume_data_{project}.pkl"))
 
         # Load Pickles
-        jd_data = load_pickle(os.path.join(root_path, "dump","pickles",f"jd_data_{project}.pkl"))
-        resume_data = load_pickle(os.path.join(root_path, "dump","pickles",f"resume_data_{project}.pkl"))
+        jd_data = util.load_pickle(os.path.join(root_path, "dump","pickles",f"jd_data_{project}.pkl"))
+        resume_data = util.load_pickle(os.path.join(root_path, "dump","pickles",f"resume_data_{project}.pkl"))
 
         # print([data.metadata["source"] for data in jd_data])
         # print([data.metadata["source"] for data in resume_data])
@@ -237,20 +237,18 @@ if __name__=="__main__":
 
         # Get job description summary
         # requirement,domain = get_jd_domain_reqs(jd_data.page_content,func_type = "prompt")
-        domain,yoe =  get_jd_domain_reqs(jd_data.page_content,func_type = "prompt")
+        domain,yoe =  prompting.get_jd_domain_reqs(jd_data.page_content,func_type = "prompt")
         jd_summary = jd_data.page_content +"\n"*2+"Domains:"+ domain
-        # print(jd_summary,len(jd_summary))
 
         recommendations[jd_key] = {}
         recommendations[jd_key]["page_content"] = jd_data.page_content
-        # recommendations[jd_key]["page_content"] = "jd_data.page_content"
         recommendations[jd_key]["summary"] = jd_summary
-        # recommendations[jd_key]["summary"] = "jd_summary"
         recommendations[jd_key]["yoe"] = yoe
-        # continue
+        recommendations[jd_key]["baseline"] = get_baseline_score(yoe)
 
         query_docs = text_splitter([jd_data])
         recommendations[jd_key]["docs"] = {}
+
         for resume_doc in resume_data:
 
             text_key = resume_doc.metadata["source"]
@@ -268,8 +266,8 @@ if __name__=="__main__":
             output = []
             llm_raw = []
             resume_content = resume_doc.page_content
-            for i in range(0,len(resume_content),15000):
-                cur = resume_content[max(i - 100,0):min(i+15000,len(resume_content))]
+            for i in range(0,len(resume_content),100000):
+                cur = resume_content[max(i - 100,0):min(i+100000,len(resume_content))]
                 # ans = "".join(get_experience_yaml(cur))
 
                 if style == styles[0]:
@@ -282,14 +280,6 @@ if __name__=="__main__":
                     temp = get_experience_gemini(jd_summary,cur)
                     llm_raw.append(temp)
                     ans = "".join(llm_raw[-1][0].text)
-                    output.append(ans)
-
-                elif style == styles[2]:
-                    from src.experience import get_dates_prompt,get_match_prompt
-                    dates = get_dates_prompt(jd_summary,cur)
-                    matches = get_match_prompt(jd_summary,cur)
-                    llm_raw.append((dates,matches))
-                    ans = "".join(llm_raw[-1][0][0].text + llm_raw[-1][1][0].text)
                     output.append(ans)
 
 
@@ -337,7 +327,7 @@ if __name__=="__main__":
 
                 #### Text-JD Cosine Score
                 text_docs = text_splitter([resume_doc])
-                score = query_text_cosine_score(query_docs,text_docs)
+                score = skills_match.query_text_cosine_score(query_docs,text_docs)
                 recommendations[jd_key]["docs"][text_key]["cosine_score"] = score
 
 
@@ -356,47 +346,55 @@ if __name__=="__main__":
 
 
             elif style == styles[2]:
-                pass
+                text_docs = text_splitter([resume_doc])
+                score = skills_match.query_text_cosine_score(query_docs,text_docs)
+                recommendations[jd_key]["docs"][text_key]["cosine_score"] = score
+
+                llm_raw,output = prompting.split_exp_score_prompt(jd_summary,resume_content)
+
+                print("Prompting Done Successfully for {}!!!".format(resume_doc.metadata["source"]))
+
                 recommendations[jd_key]["docs"][text_key]["llm_output"] = llm_raw
                 recommendations[jd_key]["docs"][text_key]["llm_text_only"] = [(ele[0][0].text,ele[1][0].text) for ele in llm_raw]
                 recommendations[jd_key]["docs"][text_key]["llm_text"] = "".join(output)
+                recommendations[jd_key]["docs"][text_key]["exp_eval"] = parse_dates_matches(recommendations[jd_key]["docs"][text_key]["llm_text_only"],yoe)
 
-                # experience = scan_all_experience(recommendations[jd_key]["docs"][text_key]["llm_text"])
-                # recommendations[jd_key]["docs"][text_key]["experience_list"] = experience[0]
-                # recommendations[jd_key]["docs"][text_key]["total_experience"] = experience[1]
-                # recommendations[jd_key]["docs"][text_key]["tech_experience"] = experience[2]
-                # recommendations[jd_key]["docs"][text_key]["domain_experience"] = experience[3]
+                final_exp_score = recommendations[jd_key]["docs"][text_key]["exp_eval"]["final_score"]
+                final_baseline_score = recommendations[jd_key]["baseline"]["final_score"]
 
+                recommendations[jd_key]["docs"][text_key]["text_it"] = "og"
+                if util.is_within_percentage(final_exp_score,final_baseline_score):
+                    llm_raw,output = prompting.split_exp_score_prompt(jd_summary,resume_content)
 
-                #### Text-JD Cosine Score
-                text_docs = text_splitter([resume_doc])
-                score = query_text_cosine_score(query_docs,text_docs)
-                recommendations[jd_key]["docs"][text_key]["cosine_score"] = score
+                    recommendations[jd_key]["docs"][text_key]["alt_llm_output"] = llm_raw
+                    recommendations[jd_key]["docs"][text_key]["alt_llm_text_only"] = [(ele[0][0].text,ele[1][0].text) for ele in llm_raw]
+                    recommendations[jd_key]["docs"][text_key]["alt_llm_text"] = "".join(output)
 
+                    print("Second Prompt Done Successfully for {}!!!".format(resume_doc.metadata["source"]))
 
-                #### Composite Score
-                recommendations[jd_key]["docs"][text_key]["final_score"] = 0.0
+                    recommendations[jd_key]["docs"][text_key]["alt_exp_eval"] = parse_dates_matches(recommendations[jd_key]["docs"][text_key]["alt_llm_text_only"],yoe)
 
-                # print(ans,len(ans))
-                # print(data.split("\n"))
-                # data = process_resume(data.page_content)
-                # import datefinder
-                # matches = datefinder.find_dates(data)
-                # for match in matches:
-                #     print(match)
-                # experience_all(data)
-                # print("\n"*4) 
+                    if recommendations[jd_key]["docs"][text_key]["alt_exp_eval"]["final_score"] > final_exp_score:
+                        final_exp_score = recommendations[jd_key]["docs"][text_key]["alt_exp_eval"]["final_score"]
+                        recommendations[jd_key]["docs"][text_key]["text_it"] = "alt"
+                    # else:
+                    #     recommendations[jd_key]["docs"][text_key]["text_it"] = "both"
+                    #     final_exp_score = (recommendations[jd_key]["docs"][text_key]["exp_eval"]["final_score"] + final_exp_score)/2
 
 
+                recommendations[jd_key]["docs"][text_key]["final_score"] = final_exp_score
+                recommendations[jd_key]["docs"][text_key]["recommendation"] = "E: Selected" if final_exp_score > final_baseline_score  else "E: Rejected"
 
             print("JD:",jd_key,"Doc:",text_key,"Done !!!")
             time.sleep(int(os.getenv("LONG_TIME")))
-        #     break
-        # break
+            print("\n"*2)
+        # Uncomment for only single run
+            break
+        break
 
 
     # print(recommendations)
-    save_pickle(recommendations,os.path.join(root_path, "dump","pickles",f"{args.filename}"))
+    util.save_pickle(recommendations,os.path.join(root_path, "dump","pickles",f"{args.filename}"))
 
 '''
 

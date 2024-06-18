@@ -420,6 +420,8 @@ import os
 import re
 import time
 import google.generativeai as genai
+import src.util as util
+import src.string_util as string_util
 
 
 def find_overlap(a, b):
@@ -626,18 +628,8 @@ def get_jd_domain_reqs_stop_words(data):
     
     return "",""
 
-# import re
-
-def check_word(word,line):
-    pattern = r'-\s*\n*\t*\s*{}\b'.format(word)
-    match = re.search(pattern, line)
-    return bool(match)
-
-
-def get_jd_domain_yoe(data,model_name = 'gemini-1.0-pro'):
+def get_jd_domain_yoe(data):
     # https://stackoverflow.com/questions/4289331/how-to-extract-numbers-from-a-string-in-python
-    genai.configure(api_key=os.environ["GEMINI"])
-    model = genai.GenerativeModel(model_name)
 
     text = \
     '''
@@ -652,23 +644,16 @@ def get_jd_domain_yoe(data,model_name = 'gemini-1.0-pro'):
     {}
     '''.format(data)
 
-    num_tokens = model.count_tokens(text)
-    gen_config = {
-        "temperature": 0.0,
-        "top_p": 0.00,
-        "top_k": 1
-    }
 
-    response = model.generate_content(text,generation_config=gen_config).text
-
-    lines = response.lower().split("\n")
+    response, _ = util.gemini_prompt_call(text)
+    lines = response.text.lower().split("\n")
 
     start,end = -1,-1
     for i in range(len(lines)):
-        if check_word("domains",lines[i]):
+        if string_util.check_word("domains",lines[i]):
             start = i
             continue
-        elif start != -1 and check_word("years",lines[i]):
+        elif start != -1 and string_util.check_word("years",lines[i]):
             end = i
 
     domains = "\n".join(lines[start:end]).strip().split(":")[1]
@@ -682,12 +667,5 @@ def get_jd_domain_yoe(data,model_name = 'gemini-1.0-pro'):
     return domains,max([int(ele) for ele in re.findall(r'\d+', yoe)])
 
 
-def get_jd_domain_reqs(data, func_type = ""):
-    if func_type == "prompt":
-        # return get_jd_domain_reqs_prompt(data)
-        return get_jd_domain_yoe(data)
-    elif func_type == "stop_words":
-        return get_jd_domain_reqs_stop_words(data)
-    else:
-        return data,""
+
     

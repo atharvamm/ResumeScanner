@@ -7,5 +7,4 @@ docs/*
 .env
 text*.txt
 test*.py
-util.py
 run.sh
