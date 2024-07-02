@@ -1,0 +1,89 @@
+# Sample Output for one resume
+
+WorkExperience:
+- Organization: Organization A
+  StartDate: Jan 2023
+  EndDate: Dec 2023
+  Title: Role A
+  SoftSkillsScore: Medium
+- Organization: Organization B
+  StartDate: Feb 2022
+  EndDate: Apr 2022
+  Title: Role B
+  SoftSkillsScore: Medium
+- Organization: Organization C
+  StartDate: May 2021
+  EndDate: Dec 2021
+  Title: Role C
+  SoftSkillsScore: Low
+- Organization: Organization D
+  StartDate: Aug 2020
+  EndDate: Mar 2021
+  Title: Role D
+  SoftSkillsScore: High
+- Organization: Organization E
+  StartDate: Sept 2019
+  EndDate: Nov 2019
+  Title: Role E
+  SoftSkillsScore: Low
+
+
+WorkExperience:
+- Organization: Company A
+  Title: Role A
+  DomainScore: Medium
+  TechnicalScore: High
+- Organization: Company B
+  Title: Role B
+  DomainScore: High
+  TechnicalScore: High
+- Organization: Company C
+  Title: Role C
+  DomainScore: None
+  TechnicalScore: High
+- Organization: Company D
+  Title: Role D
+  DomainScore: High
+  TechnicalScore: High
+- Organization: Company E
+  Title: Role E
+  DomainScore: Low
+  TechnicalScore: Medium
+
+---------------
+---------------
+
+---------------
+-  Company E || October 2019 - April 2020 || Tech.: 0.33 || Dom: 0.67
+-  Company D || March 2021 - September 2021 || Tech.: 1 || Dom: 1
+-  Company C || December 2021 - June 2022 || Tech.: 0.05 || Dom: 1
+-  Company B || January 2023 - August 2023 || Tech.: 1 || Dom: 1
+-  Company A || July 2023 - March 2024 || Tech.: 0.67 || Dom: 1
+
+------------------------
+|| Score Comparison ||
+------------------------
+Baseline: {'total_exp': 5, 'technical_exp': 3.27, 'domain_exp': 1.61, 'softskill_exp': 3.27, 'total_score': 0.5, 'technical_score': 0.15, 'domain_score': 0.033, 'softskill_score': 0.15, 'final_score': 0.22}
+==========
+Exp: {'total_exp': 1.92, 'technical_exp': 1.07, 'domain_exp': 1.80, 'softskill_exp': 1.20, 'total_score': 0.044, 'technical_score': 0.019, 'domain_score': 0.039, 'softskill_score': 0.022, 'final_score': 0.029}
+
+
+
+# Sample Final Table
+
+---------------------------------------------------------------------------
+| Resume Name              || Score || Grnd Truth ||  Prediction  |
+---------------------------------------------------------------------------
+| A.pdf                    || 0.991 || Rejected   || E: Selected  |
+---------------------------------------------------------------------------
+| B.pdf                    || 0.879 || Rejected   || E: Selected  |
+---------------------------------------------------------------------------
+| C.pdf                    || 0.762 || Selected   || E: Selected  |
+---------------------------------------------------------------------------
+| D.pdf                    || 0.677 || Rejected   || E: Selected  |
+---------------------------------------------------------------------------
+| E.pdf                    || 0.258 || Selected   || E: Rejected  |
+---------------------------------------------------------------------------
+| F.pdf                    || 0.028 || Rejected   || E: Rejected  |
+---------------------------------------------------------------------------
+# Resume Name hidden for privacy
