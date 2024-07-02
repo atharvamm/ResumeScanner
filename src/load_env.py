@@ -1,10 +1,11 @@
 import os
 
-# Load .env file
-def load_env_file(file_path=".env"):
+def load_env_file(file_path: str = ".env") -> None:
     """
-    Load environment variables from a file.
-
+    Load environment variables from a specified file.
+    
+    This function reads key-value pairs from a file and sets them as environment variables.
+    
     :param file_path: Path to the environment file, default is ".env".
     """
     try:
@@ -19,5 +20,12 @@ def load_env_file(file_path=".env"):
     except Exception as e:
         print(f"Error loading environment variables: {e}")
 
-def get_root_path():
+def get_root_path() -> str:
+    """
+    Get the root path of the project.
+    
+    This function returns the directory name of the grandparent directory of the current file.
+    
+    :return: The root path as a string.
+    """
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -1,118 +1,108 @@
 import os
-from langchain_community.document_loaders import PyPDFLoader,PDFMinerLoader
-from langchain_community.document_loaders import Docx2txtLoader
+from typing import List, Dict
+from langchain_community.document_loaders import Docx2txtLoader, UnstructuredWordDocumentLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import UnstructuredWordDocumentLoader
-from src.load_env import get_root_path
-from pdfminer.high_level import extract_text
 from langchain.schema.document import Document
 import pdfplumber
 
-def text_splitter(data):
+def text_splitter(data: List[Document]) -> List[Document]:
+    """
+    Splits the content of the documents into chunks of specified size and overlap.
+
+    Args:
+        data (List[Document]): List of documents to be split.
+
+    Returns:
+        List[Document]: List of split documents with updated metadata.
+    """
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
     texts = text_splitter.split_documents(data)
-    for i,text in enumerate(texts):
+    
+    for i, text in enumerate(texts):
         text.metadata["doc_seq"] = i + 1
+    
     return texts
 
-def parse_pdf(doc_path):
-    # print(doc_path)
-    # loader = PyPDFLoader(doc_path)
-    # loader = PDFMinerLoader(doc_path)
-    # data = loader.load()
-    # string = extract_text(doc_path)
+def parse_pdf(doc_path: str) -> List[Document]:
+    """
+    Parses a PDF document and extracts its text content.
 
+    Args:
+        doc_path (str): Path to the PDF document.
+
+    Returns:
+        List[Document]: List containing a single Document object with the extracted text.
+    """
     pdf = pdfplumber.open(doc_path)
-    pages = []
-
-    for page in pdf.pages:
-        pages.append(page.extract_text())
-
+    pages = [page.extract_text() for page in pdf.pages]
     string = "\n".join(pages)
-    data =  [Document(page_content=string, metadata={"source": "{}".format(doc_path)})]
-    # return text_splitter(data)
+    data = [Document(page_content=string, metadata={"source": doc_path})]
+    
     return data
 
-def parse_docx(doc_path):
-    # print(doc_path)
+def parse_docx(doc_path: str) -> List[Document]:
+    """
+    Parses a DOCX document and extracts its text content.
+
+    Args:
+        doc_path (str): Path to the DOCX document.
+
+    Returns:
+        List[Document]: List containing a single Document object with the extracted text.
+    """
     loader = Docx2txtLoader(doc_path)
     data = loader.load()
-    # return text_splitter(data)
+    
     return data
 
-def parse_doc(doc_path):
-    loader = UnstructuredWordDocumentLoader(doc_path,mode = "single")
+def parse_doc(doc_path: str) -> List[Document]:
+    """
+    Parses a DOC document and extracts its text content.
+
+    Args:
+        doc_path (str): Path to the DOC document.
+
+    Returns:
+        List[Document]: List containing a single Document object with the extracted text.
+    """
+    loader = UnstructuredWordDocumentLoader(doc_path, mode="single")
     data = loader.load()
-    # return text_splitter(data)
+    
     return data
 
-def parse_dir(path):
-    doc_funcs = {
-        "doc" : parse_doc,
-        "docx" : parse_docx,
-        "pdf" : parse_pdf
+def parse_dir(path: str) -> List[Document]:
+    """
+    Parses all the documents in a specified directory and extracts their text content.
+
+    Args:
+        path (str): Path to the directory containing the documents.
+
+    Returns:
+        List[Document]: List of Document objects with the extracted text from each document.
+    """
+    # Mapping of file extensions to their respective parsing functions
+    doc_funcs: Dict[str, callable] = {
+        "doc": parse_doc,
+        "docx": parse_docx,
+        "pdf": parse_pdf
     }
 
-    docs_data = []
-    doc_list = os.listdir(path)  
+    docs_data: List[Document] = []
+    doc_list = os.listdir(path)
+    
     for doc_name in doc_list:
-        if "DS_Store" in doc_name or "~" == doc_name[0]:
+        if "DS_Store" in doc_name or doc_name.startswith("~"):
             continue
-        doc_path = os.path.join(path,doc_name)
+        
+        doc_path = os.path.join(path, doc_name)
 
-        if "__" in doc_name[:2]:
-            # data = ""
+        if doc_name.startswith("__"):
             continue
 
         ext = doc_name.split(".")[-1]
-        data = doc_funcs[ext](doc_path)
-
-        # elif ".doc" in doc_name[-6:]:
-        #     data = parse_doc(doc_path)
-            
-        # elif ".pdf" in doc_name[-6:]:
-        #     pdf_path = os.path.join(path,doc_name)
-        #     data = parse_pdf(pdf_path)
-        docs_data.extend(data)
+        
+        if ext in doc_funcs:
+            data = doc_funcs[ext](doc_path)
+            docs_data.extend(data)
     
-    # print("Current: ",type(docs_data),type(docs_data[0]))
     return docs_data
-
-
-
-# # ----
-# # Table
-# # ----
-
-# pdf_path = "/Users/atharvamhaskar/Documents/ResumeScanner/docs/projects/cyberark/JD/Sailpoint-CyberArk-OFFSHORE-CHENNAI-job-description.pdf"
-
-# import pdfplumber
-# from operator import itemgetter
-
-# def check_bboxes(word, table_bbox):
-#     """
-#     Check whether word is inside a table bbox.
-#     """
-#     l = word['x0'], word['top'], word['x1'], word['bottom']
-#     r = table_bbox
-#     return l[0] > r[0] and l[1] > r[1] and l[2] < r[2] and l[3] < r[3]
-
-# with pdfplumber.open(pdf_path) as pdf:
-#     pages = []
-#     for page in pdf.pages:
-#         page.extract_text()
-
-#         tables = page.find_tables()
-#         table_bboxes = [i.bbox for i in tables]
-#         tables = [{'table': i.extract(), 'top': i.bbox[1]} for i in tables]
-#         non_table_words = [word for word in page.extract_words() if not any(
-#             [check_bboxes(word, table_bbox) for table_bbox in table_bboxes])]
-#         lines = []
-#         for cluster in pdfplumber.utils.cluster_objects(
-#                 non_table_words + tables, itemgetter('top'), tolerance=5):
-#             if 'text' in cluster[0]:
-#                 lines.append(' '.join([i['text'] for i in cluster]))
-#             elif 'table' in cluster[0]:
-#                 lines.append(cluster[0]['table'])
-#         pages.append(lines)
-# print(pages)
