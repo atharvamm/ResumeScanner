@@ -48,10 +48,6 @@ Development of the prototype: 45 days.
 ### Installation
 
 1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd resume-scanner
-   ```
 
 2. Install dependencies:
    ```bash
